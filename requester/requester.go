@@ -26,6 +26,9 @@ import (
 	"os"
 	"sync"
 	"time"
+	"fmt"
+	"crypto/rand"
+	"math/big"
 
 	"golang.org/x/net/http2"
 )
@@ -45,6 +48,7 @@ type result struct {
 	resDuration   time.Duration // response "read" duration
 	delayDuration time.Duration // delay between response and request
 	contentLength int64
+	url			  string
 }
 
 type Work struct {
@@ -144,18 +148,25 @@ func (b *Work) Finish() {
 	b.report.finalize(total)
 }
 
-func (b *Work) makeRequest(c *http.Client) {
+func (b *Work) makeRequest(c *http.Client, origurl string) {
 	s := now()
 	var size int64
 	var code int
 	var dnsStart, connStart, resStart, reqStart, delayStart time.Duration
 	var dnsDuration, connDuration, resDuration, reqDuration, delayDuration time.Duration
+	var url string
+	var num int = 0
 	var req *http.Request
 	if b.RequestFunc != nil {
 		req = b.RequestFunc()
 	} else {
 		req = cloneRequest(b.Request, b.RequestBody)
 	}
+
+	rnd, err := rand.Int(rand.Reader, big.NewInt(99999999))
+	req.URL.Path = fmt.Sprintf("%s%d%d", origurl, rnd, num)
+	url = req.URL.Path
+	num = num + 1
 	trace := &httptrace.ClientTrace{
 		DNSStart: func(info httptrace.DNSStartInfo) {
 			dnsStart = now()
@@ -203,6 +214,7 @@ func (b *Work) makeRequest(c *http.Client) {
 		reqDuration:   reqDuration,
 		resDuration:   resDuration,
 		delayDuration: delayDuration,
+		url:		   url,
 	}
 }
 
@@ -217,6 +229,8 @@ func (b *Work) runWorker(client *http.Client, n int) {
 			return http.ErrUseLastResponse
 		}
 	}
+	origurl := b.Request.URL.Path
+
 	for i := 0; i < n; i++ {
 		// Check if application is stopped. Do not send into a closed channel.
 		select {
@@ -226,7 +240,7 @@ func (b *Work) runWorker(client *http.Client, n int) {
 			if b.QPS > 0 {
 				<-throttle
 			}
-			b.makeRequest(client)
+			b.makeRequest(client,origurl)
 		}
 	}
 }
